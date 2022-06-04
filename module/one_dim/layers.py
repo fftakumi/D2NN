@@ -50,7 +50,7 @@ class Modulation(tf.keras.layers.Layer):
         config = super().get_config()
         config.update({
             "limitation": self.limitation,
-            "phi_max": self.phi_max
+            "phi_max": self.phi_max.numpy()
         })
         return config
 
