@@ -30,7 +30,7 @@ class Modulation(tf.keras.layers.Layer):
             self.limitation = tf.Variable("None", validate_shape=False, name="limitation", trainable=False)
             self.limitation = limitation
 
-        self.phi_max = tf.Variable(phi_max, validate_shape=False, name="theta_max", trainable=False)
+        self.phi_max = tf.Variable(phi_max, validate_shape=False, name="phi_max", trainable=False)
         assert self.phi_max.numpy() >= 0.0
 
     def build(self, input_dim):
