@@ -65,8 +65,9 @@ class Modulation(tf.keras.layers.Layer):
 
 
 class ElectricFieldToIntensity(tf.keras.layers.Layer):
-    def __init__(self):
+    def __init__(self, normalization=None):
         super(ElectricFieldToIntensity, self).__init__()
+        self.normalization = normalization
 
     def build(self, input_dim):
         self.input_dim = input_dim
@@ -74,6 +75,9 @@ class ElectricFieldToIntensity(tf.keras.layers.Layer):
 
     def get_config(self):
         config = super().get_config()
+        config.update({
+            "normalization": self.normalization
+        })
         return config
 
     @classmethod
@@ -82,52 +86,53 @@ class ElectricFieldToIntensity(tf.keras.layers.Layer):
 
     @tf.function
     def call(self, x):
-        return tf.abs(x)**2/2
+        intensity = tf.abs(x) ** 2 / 2
+        if self.normalization == "max":
+            intensity = intensity/tf.reduce_max(intensity, axis=1, keepdims=True)
+        return intensity
 
 
 class AngularSpectrum(tf.keras.layers.Layer):
     def __init__(self, wavelength=633.0e-9, z=0.0, d=1.0e-6, n=1.0, method=None):
         super(AngularSpectrum, self).__init__()
-        self.wavelength = tf.Variable(wavelength / n, trainable=False, name="wavelength")
-        self.k = tf.Variable(2 * np.pi / self.wavelength, trainable=False, name="wavenumber")
-        self.z = tf.Variable(z, trainable=False, name="z")
-        self.d = tf.Variable(d, trainable=False, name="d")
-        self.n = tf.Variable(n, trainable=False, name="n")
+        self.wavelength = wavelength
+        self.wavelength_effect = wavelength / n
+        self.k_effect = 2 * np.pi / self.wavelength_effect
+        self.z = z
+        self.d = d
+        self.n = n
         self.method = method
 
-        assert self.k.numpy() >= 0.0
-        assert self.z.numpy() >= 0.0
-        assert self.d.numpy() > 0.0
-        assert self.n.numpy() > 0.0
+        assert self.k_effect >= 0.0
+        assert self.z >= 0.0
+        assert self.d > 0.0
+        assert self.n > 0.0
 
     def build(self, input_dim):
         self.input_dim = input_dim
-        wavelength = self.wavelength.numpy()
-        z = self.z.numpy()
-        d = self.d.numpy()
 
         width = self.input_dim[-1]
-        u = np.fft.fftfreq(width, d=d)
-        w = np.where(u ** 2 <= 1 / wavelength ** 2, tf.sqrt(1 / wavelength**2 - u**2), 0).astype('float64')
-        h = np.exp(1.0j * 2 * np.pi * w * z)
+        u = np.fft.fftfreq(width, d=self.d)
+        w = np.where(u ** 2 <= 1 / self.wavelength_effect ** 2, tf.sqrt(1 / self.wavelength_effect ** 2 - u ** 2), 0).astype('float64')
+        h = np.exp(1.0j * 2 * np.pi * w * self.z)
         if self.method == "band_limited":
-            du = 1/(2*width * self.d)
-            u_limit = 1/(np.sqrt((2 * du * z)**2 + 1)) / wavelength
-            u_filter = np.where(np.abs(u)/(2*u_limit) <= 1/2, 1, 0)
+            du = 1 / (2 * width * self.d)
+            u_limit = 1 / (np.sqrt((2 * du * self.z) ** 2 + 1)) / self.wavelength_effect
+            u_filter = np.where(np.abs(u) / (2 * u_limit) <= 1 / 2, 1, 0)
             h = h * u_filter
         elif self.method == "expand":
-            self.pad_width = math.ceil(self.input_dim[-1] /2)
+            self.pad_width = math.ceil(self.input_dim[-1] / 2)
             self.padded_width = int(input_dim[-1] + self.pad_width * 2)
 
-            u = np.fft.fftfreq(self.padded_width, d=d)
+            u = np.fft.fftfreq(self.padded_width, d=self.d)
 
-            du = 1 / (self.padded_width * d)
-            u_limit = 1 / (np.sqrt((2 * du * z) ** 2 + 1)) / wavelength
+            du = 1 / (self.padded_width * self.d)
+            u_limit = 1 / (np.sqrt((2 * du * self.z) ** 2 + 1)) / self.wavelength_effect
 
             u_filter = np.where(np.abs(u) <= u_limit, 1.0, 0.0)
 
-            w = np.where(u ** 2 <= 1 / wavelength ** 2, tf.sqrt(1 / wavelength ** 2 - u ** 2), 0).astype('float64')
-            h = np.exp(1.0j * 2 * np.pi * w * z)
+            w = np.where(u ** 2 <= 1 / self.wavelength_effect ** 2, tf.sqrt(1 / self.wavelength_effect ** 2 - u ** 2), 0).astype('float64')
+            h = np.exp(1.0j * 2 * np.pi * w * self.z)
             h = h * u_filter
 
         self.res = tf.cast(tf.complex(h.real, h.imag), dtype=tf.complex64)
@@ -135,6 +140,14 @@ class AngularSpectrum(tf.keras.layers.Layer):
 
     def get_config(self):
         config = super().get_config()
+        config.update({
+            "wavelength": self.wavelength,
+            "wavelength_effect": self.wavelength_effect,
+            "k_effect": self.k_effect,
+            "z": self.z,
+            "d": self.d,
+            "n": self.n
+        })
         return config
 
     @classmethod
@@ -146,12 +159,12 @@ class AngularSpectrum(tf.keras.layers.Layer):
         if self.method == "band_limited":
             fft_x = tf.signal.fft(x)
             return tf.signal.ifft(fft_x * self.res)
-        elif self.method=='expand':
-            padding = [[0,0],[self.pad_width, self.pad_width]]
+        elif self.method == 'expand':
+            padding = [[0, 0], [self.pad_width, self.pad_width]]
             images_pad = tf.pad(x, paddings=padding)
             images_pad_fft = tf.signal.fft(images_pad)
             u_images_pad = tf.signal.ifft(images_pad_fft * self.res)
-            u_images = tf.keras.layers.Lambda(lambda x:x[:, self.pad_width:self.pad_width + self.input_dim[--1]])(u_images_pad)
+            u_images = tf.keras.layers.Lambda(lambda x: x[:, self.pad_width:self.pad_width + self.input_dim[--1]])(u_images_pad)
             return u_images
         else:
             fft_x = tf.signal.fft(x)
@@ -166,6 +179,7 @@ class Detector(tf.keras.layers.Layer):
         self.interval = interval
         assert 0.0 <= self.padding < 1.0
         assert 0.0 <= self.interval <= 1.0
+
     def build(self, input_dim):
         ######++++--++++--++++--++++--++++--++++######
         # #:padding
@@ -175,11 +189,11 @@ class Detector(tf.keras.layers.Layer):
         window_width = (1 - self.padding) * self.input_dim[-1] / (self.output_dim + (self.output_dim - 1) * self.interval)
         filters = np.zeros([self.input_dim[-1], self.output_dim])
         for i in range(self.output_dim):
-            start = int(self.padding * self.input_dim[-1]/2 + i * (window_width + window_width * self.interval))
+            start = int(self.padding * self.input_dim[-1] / 2 + i * (window_width + window_width * self.interval))
             end = int(start + window_width)
             filters[start:end, i] = 1.0
 
-        self.filter = tf.constant(filters, dtype=tf.float32)
+        self.filters = tf.constant(filters, dtype=tf.float32)
         super(Detector, self).build(input_dim)
 
     def get_config(self):
@@ -196,7 +210,20 @@ class Detector(tf.keras.layers.Layer):
 
     @tf.function
     def call(self, x):
-        return tf.tensordot(x, self.filter, axes=[-1, 0])
+        return tf.tensordot(x, self.filters, axes=[-1, 0])
+
+
+class Filter(Detector):
+    def __init__(self, output_dim, **kwargs):
+        super(Filter, self).__init__(output_dim, **kwargs)
+
+    def build(self, input_dim):
+        super(Filter, self).build(input_dim)
+        self.filter = tf.reduce_sum(self.filters, axis=1)
+
+    @tf.function
+    def call(self, x):
+        return x * self.filter
 
 
 class ImageResizing(tf.keras.layers.Layer):
@@ -210,6 +237,10 @@ class ImageResizing(tf.keras.layers.Layer):
             "output_dim": self.output_dim
         })
         return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
     @tf.function
     def call(self, x):
