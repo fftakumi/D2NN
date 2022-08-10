@@ -12,7 +12,7 @@ for f in files:
 md = ""
 for note in notes:
     md = md + "### " + os.path.splitext(note)[0] + "\n"
-    md = md + "[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/konnitiha3/MOD2NN/blob/master/train_note/" + note + ")\n"
+    md = md + "[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/konnitiha3/D2NN/blob/master/train_note/" + note + ")\n"
 
 with open("links.md", mode="w") as f:
     f.write(md)
