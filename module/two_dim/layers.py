@@ -83,7 +83,7 @@ class Modulation(tf.keras.layers.Layer):
         if self.limitation == 'sigmoid':
             return self.phi_max * tf.sigmoid(self.phi)
         elif self.limitation == 'sin':
-            return self.phi_max * tf.sin(self.phi) + self.phi_max/2.0
+            return self.phi_max * (tf.sin(self.phi) + 1.0) / 2
         else:
             return self.phi
 
